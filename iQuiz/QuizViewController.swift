@@ -23,6 +23,8 @@ class QuizViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        answersTableView.rowHeight = UITableView.automaticDimension
+        answersTableView.estimatedRowHeight = 110
         setupUI()
         displayCurrentQuestion()
         submitButton.isEnabled = false
@@ -89,6 +91,9 @@ extension QuizViewController: UITableViewDataSource, UITableViewDelegate {
         let cell = tableView.dequeueReusableCell(withIdentifier: "AnswerCell", for: indexPath)
                 
         let answer = category.questions[currentQuestionIndex].answers[indexPath.row]
+        
+        cell.textLabel?.numberOfLines = 0
+        cell.textLabel?.lineBreakMode = .byWordWrapping
         cell.textLabel?.text = answer.text
         
         if let selectedIndex = selectedAnswerIndex, selectedIndex == indexPath.row {

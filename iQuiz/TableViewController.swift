@@ -50,10 +50,128 @@ class TableViewController: UITableViewController {
     
     var quizCategories: [QuizCategory] = []
     
+    var jsonUrl: URL? {
+            get {
+                if let urlString = UserDefaults.standard.string(forKey: "CustomQuizURL") {
+                    return URL(string: urlString)
+                }
+                return URL(string: "http://tednewardsandbox.site44.com/questions.json")
+            }
+            set {
+                if let urlString = newValue?.absoluteString {
+                    UserDefaults.standard.set(urlString, forKey: "CustomQuizURL")
+                }
+            }
+        }
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view.
-        loadQuizCategories()
+        loadQuizCategoriesFromJSON()
+    }
+    
+    func loadQuizCategoriesFromJSON() {
+        guard let url = jsonUrl else {
+            print("Invalid URL")
+            loadQuizCategories()
+            return
+        }
+        
+        let task = URLSession.shared.dataTask(with: url) {
+            [weak self] data, response, error in DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let error = error {
+                    print("Error fetching data: \(error)")
+                    self.showErrorAlert(message: "Failed to load quiz data. Using local data instead.")
+                    self.loadQuizCategories()
+                    return
+                }
+                
+                guard let data = data else {
+                    print("No data returned")
+                    self.showErrorAlert(message: "No quiz data received. Using local data instead.")
+                    self.loadQuizCategories()
+                    return
+                }
+                
+                do {
+                    let jsonArray = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]]
+                    guard let jsonArray = jsonArray else {
+                        print("Invalid JSON format")
+                        self.showErrorAlert(message: "Invalid quiz data format. Using local data instead.")
+                        self.loadQuizCategories()
+                        return
+                    }
+                    self.processJSONData(jsonArray)
+                } catch {
+                    print("JSON parsing error: \(error)")
+                    self.showErrorAlert(message: "Error parsing quiz data. Using local data instead.")
+                    self.loadQuizCategories()
+                }
+            }
+        }
+        task.resume()
+    }
+    
+    func processJSONData(_ jsonArray: [[String: Any]]) {
+        var categories: [QuizCategory] = []
+        
+        for (index, categoryData) in jsonArray.enumerated() {
+            let id = "category_\(index)"
+            let title = categoryData["title"] as? String ?? "Unknown Category \(index)"
+            let description = categoryData["desc"] as? String ?? "No description provided."
+            let image = getCategoryImage(for: title)
+            var category = QuizCategory(id: id, name: title, image: image, description: description)
+            
+            if let questionsData = categoryData["questions"] as? [[String: Any]] {
+                var questions: [Question] = []
+                
+                for questionData in questionsData {
+                    let questionText = questionData["text"] as? String ?? "Unknown Question"
+                    let correctAnswerString = questionData["answer"] as? String ?? "1"
+                    let correctAnswerIndex = Int(correctAnswerString) ?? 1
+                    let answersArray = questionData["answers"] as? [String] ?? []
+                    
+                    var answers: [Answer] = []
+                    
+                    for (index, answerText) in answersArray.enumerated() {
+                        let isCorrect = (index + 1) == correctAnswerIndex
+                        answers.append(Answer(text: answerText, isCorrect: isCorrect))
+                    }
+                    
+                    let question = Question(text: questionText, answers: answers)
+                    questions.append(question)
+                }
+                category.questions = questions
+            }
+            categories.append(category)
+        }
+        quizCategories = categories
+        tableView.reloadData()
+    }
+    
+    func getCategoryImage(for title: String) -> String {
+        switch title {
+        case "Mathematics":
+            return "math-logo"
+        case "Marvel Super Heroes":
+            return "marvel-avengers-logo"
+        case "Science!":
+            return "science-logo"
+        default:
+            return "default-logo"
+        }
+    }
+    
+    func showErrorAlert(message: String) {
+        let alert = UIAlertController(title: "Error",
+                                     message: message,
+                                     preferredStyle: .alert)
+
+        let okAction = UIAlertAction(title: "OK", style: .default)
+        alert.addAction(okAction)
+        
+        present(alert, animated: true)
     }
     
     func loadQuizCategories() {
@@ -75,7 +193,6 @@ class TableViewController: UITableViewController {
                 "description": "Explore the wonders of our natural world."
             ]
         ]
-        
         quizCategories = categoriesData.map { QuizCategory(dictionary: $0) }
         loadQuestions()
     }
@@ -191,10 +308,6 @@ class TableViewController: UITableViewController {
         ]
     }
     
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        return 1
-    }
-    
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         return quizCategories.count
     }
@@ -241,13 +354,41 @@ class TableViewController: UITableViewController {
     
     @IBAction func settingsButtonTapped(_ sender: UIBarButtonItem) {
         let alert = UIAlertController(title: "Settings",
-                                     message: "Settings go here",
+                                     message: "Enter a custom URL for more quizzes here.",
                                      preferredStyle: .alert)
         
-        let okAction = UIAlertAction(title: "OK", style: .default)
-        alert.addAction(okAction)
+        alert.addTextField { textField in
+            textField.placeholder = "Enter URL"
+            if let currentUrl = self.jsonUrl {
+                textField.text = currentUrl.absoluteString
+            }
+        }
         
-        present(alert, animated: true)
+        let checkNowAction = UIAlertAction(title: "Check Now", style: .default) { [weak self] _ in
+            guard let self = self,
+                  let urlTextField = alert.textFields?.first,
+                  let urlString = urlTextField.text, !urlString.isEmpty else { return }
+            if let url = URL(string: urlString) {
+                self.jsonUrl = url
+                self.loadQuizCategoriesFromJSON()
+            } else {
+                self.showErrorAlert(message: "Invalid URL format.")
+            }
+        }
+        
+        let resetAction = UIAlertAction(title: "Reset to Default", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            UserDefaults.standard.removeObject(forKey: "CustomQuizURL")
+            self.jsonUrl = URL(string: "http://tednewardsandbox.site44.com/questions.json")
+            self.loadQuizCategoriesFromJSON()
+        }
+        
+        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel, handler: nil)
+
+        alert.addAction(checkNowAction)
+        alert.addAction(resetAction)
+        alert.addAction(cancelAction)
+        present(alert, animated: true, completion: nil)
     }
     
     @IBAction func UnwindToTableView(_ unwindSegue: UIStoryboardSegue) {
