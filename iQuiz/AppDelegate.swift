@@ -14,6 +14,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
+        let defaultSettings: [String: Any] = [
+            "CustomQuizURL": "http://tednewardsandbox.site44.com/questions.json"
+        ]
+        UserDefaults.standard.register(defaults: defaultSettings)
+        
         return true
     }
 

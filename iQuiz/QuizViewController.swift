@@ -41,8 +41,6 @@ class QuizViewController: UIViewController {
         selectedAnswerIndex = nil
         submitButton.isEnabled = false
         
-        print(currentQuestionIndex)
-        print(category.questions.count)
         let currentQuestion = category.questions[currentQuestionIndex]
         questionLabel.text = currentQuestion.text
         questionCountLabel.text = "Question \(currentQuestionIndex + 1) of \(category.questions.count)"

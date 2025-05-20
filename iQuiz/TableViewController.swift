@@ -66,15 +66,12 @@ class TableViewController: UITableViewController {
     
     var jsonUrl: URL? {
         get {
-            if let urlString = UserDefaults.standard.string(forKey: "CustomQuizURL") {
-                return URL(string: urlString)
+            if let urlString = UserDefaults.standard.string(forKey: "CustomQuizURL"),
+               !urlString.isEmpty,
+               let url = URL(string: urlString) {
+                return url
             }
             return URL(string: "http://tednewardsandbox.site44.com/questions.json")
-        }
-        set {
-            if let urlString = newValue?.absoluteString {
-                UserDefaults.standard.set(urlString, forKey: "CustomQuizURL")
-            }
         }
     }
     
@@ -84,23 +81,47 @@ class TableViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupNetworkMonitoring()
-        loadQuizCategoriesFromJSON()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(userDefaultsDidChange),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
+    }
+    
+    @objc func userDefaultsDidChange(_ notification: Notification) {
+        if UIApplication.shared.applicationState == .active {
+            loadQuizCategoriesFromJSON()
+        }
     }
     
     func setupNetworkMonitoring() {
         pathMonitor = NWPathMonitor()
+        isConnected = false
+        
         pathMonitor?.pathUpdateHandler = { [weak self] path in
+            let connected = path.status == .satisfied
             DispatchQueue.main.async {
-                self?.isConnected = path.status == .satisfied
-                print("Network connection status: \(self?.isConnected == true ? "Connected" : "Disconnected")")
+                let wasConnected = self?.isConnected ?? false
+                self?.isConnected = connected
+                print("Network connection status: \(connected ? "Connected" : "Disconnected")")
+                if !wasConnected && connected {
+                    self?.loadQuizCategoriesFromJSON()
+                }
             }
         }
+        
         let queue = DispatchQueue(label: "NetworkMonitor")
         pathMonitor?.start(queue: queue)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.loadQuizCategoriesFromJSON()
+        }
     }
     
     deinit {
         pathMonitor?.cancel()
+        NotificationCenter.default.removeObserver(self)
     }
     
     func loadQuizCategoriesFromJSON() {
@@ -128,26 +149,13 @@ class TableViewController: UITableViewController {
                 guard let self = self else { return }
                 if let error = error {
                     print("Error fetching data: \(error)")
-                    if let localCategories = self.loadQuizzesFromLocalStorage() {
-                        self.quizCategories = localCategories
-                        self.tableView.reloadData()
-                        print("Loading from local storage due to fetch error")
-                    } else {
-                        self.showErrorAlert(message: "Failed to load quiz data. Using local data instead.")
-                        self.loadQuizCategories()
-                    }
+                    self.handleDataLoadError(message: "Failed to load quiz data. Using local data instead.")
                     return
                 }
                 
                 guard let data = data else {
                     print("No data returned")
-                    if let localCategories = self.loadQuizzesFromLocalStorage() {
-                        self.quizCategories = localCategories
-                        self.tableView.reloadData()
-                    } else {
-                        self.showErrorAlert(message: "No quiz data received. Using local data instead.")
-                        self.loadQuizCategories()
-                    }
+                    self.handleDataLoadError(message: "No quiz data received. Using local data instead.")
                     return
                 }
                 
@@ -155,26 +163,14 @@ class TableViewController: UITableViewController {
                     let jsonArray = try JSONSerialization.jsonObject(with: data, options: []) as? [[String: Any]]
                     guard let jsonArray = jsonArray else {
                         print("Invalid JSON format")
-                        if let localCategories = self.loadQuizzesFromLocalStorage() {
-                            self.quizCategories = localCategories
-                            self.tableView.reloadData()
-                        } else {
-                            self.showErrorAlert(message: "Invalid quiz data format. Using local data instead.")
-                            self.loadQuizCategories()
-                        }
+                        self.handleDataLoadError(message: "Invalid quiz data format. Using local data instead.")
                         return
                     }
                     self.processJSONData(jsonArray)
                     self.saveQuizzesToLocalStorage()
                 } catch {
                     print("JSON parsing error: \(error)")
-                    if let localCategories = self.loadQuizzesFromLocalStorage() {
-                        self.quizCategories = localCategories
-                        self.tableView.reloadData()
-                    } else {
-                        self.showErrorAlert(message: "Error parsing quiz data. Using local data instead.")
-                        self.loadQuizCategories()
-                    }
+                    self.handleDataLoadError(message: "Error parsing quiz data. Using local data instead.")
                 }
             }
         }
@@ -228,6 +224,17 @@ class TableViewController: UITableViewController {
             return "science-logo"
         default:
             return "default-logo"
+        }
+    }
+    
+    func handleDataLoadError(message: String) {
+        if let localCategories = loadQuizzesFromLocalStorage() {
+            quizCategories = localCategories
+            tableView.reloadData()
+            print("Loading from local storage")
+        } else {
+            showErrorAlert(message: message)
+            loadQuizCategories()
         }
     }
     
@@ -491,64 +498,11 @@ class TableViewController: UITableViewController {
     }
     
     @IBAction func settingsButtonTapped(_ sender: UIBarButtonItem) {
-        let settingsURL = URL(string: UIApplication.openSettingsURLString)
-        let alert = UIAlertController(title: "Settings",
-                                      message: "Choose where to modify settings:",
-                                      preferredStyle: .actionSheet)
-        
-        let settingsAppAction = UIAlertAction(title: "Open Settings App", style: .default) { _ in
+        if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(settingsURL, options: [:], completionHandler: nil)
+        } else {
+            showErrorAlert(message: "Could not open Settings app.")
         }
-        let inAppAction = UIAlertAction(title: "Modify URL In-App", style: .default) { [weak self] _ in
-            self?.showURLSettingsAlert()
-        }
-        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel)
-        
-        alert.addAction(settingsAppAction)
-        alert.addAction(inAppAction)
-        alert.addAction(cancelAction)
-        
-        present(alert, animated: true)
-    }
-    
-    func showURLSettingsAlert() {
-        let alert = UIAlertController(title: "Quiz URL Settings",
-                                     message: "Enter a custom URL for more quizzes here.",
-                                     preferredStyle: .alert)
-        
-        alert.addTextField { textField in
-            textField.placeholder = "Enter URL"
-            if let currentUrl = self.jsonUrl {
-                textField.text = currentUrl.absoluteString
-            }
-        }
-        
-        let checkNowAction = UIAlertAction(title: "Check Now", style: .default) { [weak self] _ in
-            guard let self = self,
-                  let urlTextField = alert.textFields?.first,
-                  let urlString = urlTextField.text, !urlString.isEmpty else { return }
-            if let url = URL(string: urlString) {
-                self.jsonUrl = url
-                self.loadQuizCategoriesFromJSON()
-            } else {
-                self.showErrorAlert(message: "Invalid URL format.")
-            }
-        }
-        
-        let resetAction = UIAlertAction(title: "Reset to Default", style: .destructive) { [weak self] _ in
-            guard let self = self else { return }
-            UserDefaults.standard.removeObject(forKey: "CustomQuizURL")
-            self.jsonUrl = URL(string: "http://tednewardsandbox.site44.com/questions.json")
-            self.loadQuizCategoriesFromJSON()
-        }
-        
-        let cancelAction = UIAlertAction(title: "Cancel", style: .cancel)
-        
-        alert.addAction(checkNowAction)
-        alert.addAction(resetAction)
-        alert.addAction(cancelAction)
-        
-        present(alert, animated: true)
     }
     
     @IBAction func UnwindToTableView(_ unwindSegue: UIStoryboardSegue) {
